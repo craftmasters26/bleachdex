@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Add character — BleachDex Admin{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Add a character</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <label for="image">Character image</label>
+        <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp" required>
+
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" required>
+
+        <label for="hp">HP</label>
+        <input type="number" id="hp" name="hp" min="1" value="{{ form.get('hp', '') }}" required>
+
+        <label for="attack">Attack</label>
+        <input type="number" id="attack" name="attack" min="1" value="{{ form.get('attack', '') }}" required>
+
+        <label for="tier">Tier</label>
+        <select id="tier" name="tier">
+            {% for t in tiers %}
+            <option value="{{ t }}" {% if form.get('tier', 'common') == t %}selected{% endif %}>{{ t.title() }}</option>
+            {% endfor %}
+        </select>
+        <p class="muted">Mythic is the rarest pull, common is the most frequent.</p>
+
+        <label for="emoji">Custom emoji ID (optional, shown in /collection etc.)</label>
+        <input type="text" id="emoji" name="emoji" placeholder="e.g. 123456789012345678 — right-click the emoji in Discord (Developer Mode on) → Copy Emoji ID" value="{{ form.get('emoji', '') }}">
+
+        <label for="ability_name">Ability name (optional)</label>
+        <input type="text" id="ability_name" name="ability_name" value="{{ form.get('ability_name', '') }}">
+
+        <label for="ability_description">Ability description (optional)</label>
+        <textarea id="ability_description" name="ability_description">{{ form.get('ability_description', '') }}</textarea>
+
+        <button type="submit">Save character</button>
+        <a class="btn secondary" href="{{ url_for('admin.index') }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Add weapon — BleachDex Admin{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Add a weapon (Zanpakuto)</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <label for="image">Weapon image</label>
+        <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp" required>
+
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ form.get('name', '') }}" required>
+
+        <label for="attack">Attack bonus (added on top of the wielder's attack when equipped)</label>
+        <input type="number" id="attack" name="attack" min="1" value="{{ form.get('attack', '') }}" required>
+
+        <label for="tier">Tier</label>
+        <select id="tier" name="tier">
+            {% for t in tiers %}
+            <option value="{{ t }}" {% if form.get('tier', 'common') == t %}selected{% endif %}>{{ t.title() }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="emoji">Custom emoji ID (optional)</label>
+        <input type="text" id="emoji" name="emoji" placeholder="e.g. 123456789012345678" value="{{ form.get('emoji', '') }}">
+
+        <button type="submit">Save weapon</button>
+        <a class="btn secondary" href="{{ url_for('admin.index') }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

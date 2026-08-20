@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Roster — BleachDex Admin{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Characters ({{ characters|length }})</h2>
+    <p class="muted">Disabled entries stop appearing in packs but stay in players' collections.</p>
+    <a class="btn" href="{{ url_for('admin.add_character') }}">+ Add character</a>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr><th></th><th>Name</th><th>HP</th><th>Attack</th><th>Tier</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for c in characters %}
+            <tr>
+                <td><img class="thumb" src="/static/uploads/{{ c.image_path.split('/')[-1] }}" onerror="this.style.visibility='hidden'"></td>
+                <td>{{ c.emoji }} {{ c.name }}</td>
+                <td>{{ c.hp }}</td>
+                <td>{{ c.attack }}</td>
+                <td>{{ c.tier.title() }}</td>
+                <td>{{ "Enabled" if c.enabled else "Disabled" }}</td>
+                <td>
+                    {% if c.enabled %}
+                    <form method="POST" action="{{ url_for('admin.delete_character', character_id=c.id) }}" style="display:inline">
+                        <button type="submit" class="secondary" style="margin:0; padding:4px 10px; font-size:12px;">Disable</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" class="muted">No characters yet — add your first one.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Weapons ({{ weapons|length }})</h2>
+    <a class="btn" href="{{ url_for('admin.add_weapon') }}">+ Add weapon</a>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr><th></th><th>Name</th><th>Attack bonus</th><th>Tier</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for w in weapons %}
+            <tr>
+                <td><img class="thumb" src="/static/uploads/{{ w.image_path.split('/')[-1] }}" onerror="this.style.visibility='hidden'"></td>
+                <td>{{ w.emoji }} {{ w.name }}</td>
+                <td>+{{ w.attack_bonus }}</td>
+                <td>{{ w.tier.title() }}</td>
+                <td>{{ "Enabled" if w.enabled else "Disabled" }}</td>
+                <td>
+                    {% if w.enabled %}
+                    <form method="POST" action="{{ url_for('admin.delete_weapon', weapon_id=w.id) }}" style="display:inline">
+                        <button type="submit" class="secondary" style="margin:0; padding:4px 10px; font-size:12px;">Disable</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="6" class="muted">No weapons yet — add your first one.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

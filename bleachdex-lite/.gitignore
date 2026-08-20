@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+db/bleachdex.sqlite3
+admin/static/uploads/*
+!admin/static/uploads/.gitkeep
+assets/backgrounds/active_template.png

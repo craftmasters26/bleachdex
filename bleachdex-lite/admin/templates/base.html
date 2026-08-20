@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}BleachDex Admin{% endblock %}</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #171a23;
+            --border: #2a2e3a;
+            --text: #e8e8ec;
+            --muted: #9096a5;
+            --accent: #e8542a; /* Bleach-ish orange-red */
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        header a { color: var(--text); text-decoration: none; font-weight: 600; }
+        header nav a { color: var(--muted); margin-left: 16px; font-weight: 400; }
+        main { max-width: 720px; margin: 32px auto; padding: 0 24px; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        label { display: block; margin: 12px 0 4px; font-size: 14px; color: var(--muted); }
+        input[type=text], input[type=number], input[type=password], textarea {
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: #0d0f15;
+            color: var(--text);
+            font-size: 14px;
+        }
+        textarea { min-height: 70px; resize: vertical; }
+        button, .btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 18px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        button.secondary, .btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .flash { background: #3a2a1a; border: 1px solid #a05a2a; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        img.thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+        .muted { color: var(--muted); font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="{{ url_for('admin.index') }}">🗡️ BleachDex Admin</a>
+        {% if session.get('logged_in') %}
+        <nav>
+            <a href="{{ url_for('admin.add_character') }}">Add character</a>
+            <a href="{{ url_for('admin.add_weapon') }}">Add weapon</a>
+            <a href="{{ url_for('admin.logout') }}">Log out</a>
+        </nav>
+        {% endif %}
+    </header>
+    <main>
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
