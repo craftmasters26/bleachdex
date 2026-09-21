@@ -140,8 +140,8 @@ class AdminAdd(commands.Cog):
         weapon_id = wp.add_weapon(name=name, image_path=image_path)
         await interaction.followup.send(
             f"✅ Added **{name}** — id `{weapon_id}`. It's catchable/spawnable now, "
-            f"but it doesn't have its card set up yet (still placeholder stats). "
-            f"Run `/admin edit weapon` to fill in damage and a template.",
+            f"but it doesn't have its card set up yet (still a placeholder +0% boost). "
+            f"Run `/admin edit weapon` to fill in its boost type/percent and a template.",
             ephemeral=True,
         )
 
@@ -193,9 +193,15 @@ class AdminAdd(commands.Cog):
 async def setup(bot: commands.Bot):
     cog = AdminAdd(bot)
     await bot.add_cog(cog)
-    # Note: bot.add_cog() already registers character_group and weapon_group
-    # (and, transitively, admin_group - see cogs/admin_group.py) to the
-    # command tree automatically, since they're defined as Group class
-    # attributes on the Cog. admin_group itself only gets explicitly
-    # added to bot.tree once, in bot.py's setup_hook, after every
-    # extension has loaded.
+    # IMPORTANT: character_group/weapon_group are Group class attributes
+    # that already have parent=admin_group set, so discord.py's Cog
+    # machinery does NOT treat them as the cog's own top-level commands
+    # and never binds their sub-commands' `self` to this cog instance
+    # (command.binding stays None). Left alone, every command under
+    # /admin character and /admin weapon fails at runtime with a
+    # signature-mismatch error the moment someone invokes it, because
+    # `interaction` silently gets passed positionally into the `self`
+    # slot. We bind them by hand here instead.
+    for group in (cog.character_group, cog.weapon_group):
+        for command in group.walk_commands():
+            command.binding = cog

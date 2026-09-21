@@ -82,7 +82,33 @@ class AdminEdit(commands.Cog):
         path = await _save_attachment(template, dest)
         set_setting("card_template_path", path)
         await interaction.followup.send(
-            "✅ Global card template updated — any card without its own template will use it from now on.",
+            "Global card template updated — any card without its own template will use it from now on.",
+            ephemeral=True,
+        )
+
+    @edit_group.command(
+        name="faction-template",
+        description="[Admin] Set a card template for one faction (Soul Reaper/Quincy/Hollow/Full Bringer)",
+    )
+    @app_commands.choices(
+        faction=[
+            app_commands.Choice(name="Soul Reaper", value="soul_reaper"),
+            app_commands.Choice(name="Quincy", value="quincy"),
+            app_commands.Choice(name="Hollow", value="hollow"),
+            app_commands.Choice(name="Full Bringer", value="fullbringer"),
+        ]
+    )
+    @is_admin()
+    async def faction_template(
+        self, interaction: discord.Interaction, faction: app_commands.Choice[str], template: discord.Attachment
+    ):
+        await interaction.response.defer(ephemeral=True)
+        dest = TEMPLATE_DIR / f"faction_{faction.value}.png"
+        path = await _save_attachment(template, dest)
+        set_setting(f"card_template_path:{faction.value}", path)
+        await interaction.followup.send(
+            f"{faction.name} card template updated — every character/weapon in that faction without "
+            f"its own individual template will use this from now on.",
             ephemeral=True,
         )
 
@@ -154,7 +180,7 @@ class AdminEdit(commands.Cog):
             ability_name=ability_name, ability_description=ability_description,
         )
         await interaction.followup.send(
-            f"✅ Updated **{char.name}**'s card. This only changes what shows in "
+            f"Updated **{char.name}**'s card. This only changes what shows in "
             f"`/pack daily`/`/card view` - {char.name}'s spawn image is unchanged. "
             f"Preview it with `/card view name:{char.name}`.",
             ephemeral=True,
@@ -162,16 +188,21 @@ class AdminEdit(commands.Cog):
 
     @edit_group.command(
         name="weapon",
-        description="[Admin] Build/update the card for an already-added weapon (damage, template, art)",
+        description="[Admin] Build/update the card for an already-added weapon (boost, template, art)",
     )
     @app_commands.describe(
         weapon="An already-added weapon (see /admin weapon add)",
         template="Optional: a card background just for this weapon",
-        damage="Optional: set this weapon's attack bonus",
+        boost_type="Optional: which stat this weapon boosts - 'damage' or 'hp'",
+        boost_percent="Optional: set this weapon's boost percent, e.g. 40 for +40%",
         image="Optional: pick a card artwork from card.py (spawns keep using the original image - use /admin change weapon for that)",
         ability_name="Optional: set this weapon's ability name",
         ability_description="Optional: set this weapon's ability description",
     )
+    @app_commands.choices(boost_type=[
+        app_commands.Choice(name="Damage", value="damage"),
+        app_commands.Choice(name="HP", value="hp"),
+    ])
     @app_commands.autocomplete(weapon=_weapon_autocomplete, image=_card_autocomplete)
     @is_admin()
     async def card_weapon(
@@ -179,7 +210,8 @@ class AdminEdit(commands.Cog):
         interaction: discord.Interaction,
         weapon: str,
         template: discord.Attachment = None,
-        damage: int = None,
+        boost_type: app_commands.Choice[str] = None,
+        boost_percent: int = None,
         image: str = None,
         ability_name: str = None,
         ability_description: str = None,
@@ -191,12 +223,12 @@ class AdminEdit(commands.Cog):
             )
             return
         if (
-            template is None and damage is None and image is None
+            template is None and boost_type is None and boost_percent is None and image is None
             and ability_name is None and ability_description is None
         ):
             await interaction.response.send_message(
-                "Give me at least one of template, damage, image, ability_name, "
-                "or ability_description to update.", ephemeral=True
+                "Give me at least one of template, boost_type, boost_percent, image, "
+                "ability_name, or ability_description to update.", ephemeral=True
             )
             return
 
@@ -220,12 +252,12 @@ class AdminEdit(commands.Cog):
             image_path = await _save_from_url(image_url, dest)
 
         wp.update_weapon_card(
-            wpn.id, attack_bonus=damage,
+            wpn.id, boost_type=boost_type.value if boost_type else None, boost_percent=boost_percent,
             card_template_path=template_path, card_image_path=image_path,
             ability_name=ability_name, ability_description=ability_description,
         )
         await interaction.followup.send(
-            f"✅ Updated **{wpn.name}**'s card. This only changes what shows in "
+            f"Updated **{wpn.name}**'s card. This only changes what shows in "
             f"`/pack daily`/`/card view` - {wpn.name}'s spawn image is unchanged. "
             f"Preview it with `/card view name:{wpn.name}`.",
             ephemeral=True,
@@ -243,7 +275,7 @@ class AdminEdit(commands.Cog):
         dest = UPLOAD_DIR / f"{name.lower().replace(' ', '_')}_v2{ext}"
         path = await _save_attachment(image, dest)
         ch.update_character_image(character.id, path)
-        await interaction.followup.send(f"✅ Updated **{character.name}**'s image.", ephemeral=True)
+        await interaction.followup.send(f"Updated **{character.name}**'s image.", ephemeral=True)
 
     @change_group.command(name="weapon", description="[Admin] Swap an existing weapon's image")
     @is_admin()
@@ -257,11 +289,11 @@ class AdminEdit(commands.Cog):
         dest = UPLOAD_DIR / f"weapon_{name.lower().replace(' ', '_')}_v2{ext}"
         path = await _save_attachment(image, dest)
         wp.update_weapon_image(weapon.id, path)
-        await interaction.followup.send(f"✅ Updated **{weapon.name}**'s image.", ephemeral=True)
+        await interaction.followup.send(f"Updated **{weapon.name}**'s image.", ephemeral=True)
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CheckFailure):
-            msg = "🚫 Only the bot owner/admins listed in ADMIN_USER_IDS can use this command."
+            msg = "Only the bot owner/admins listed in ADMIN_USER_IDS can use this command."
             if interaction.response.is_done():
                 await interaction.followup.send(msg, ephemeral=True)
             else:
@@ -271,4 +303,12 @@ class AdminEdit(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(AdminEdit(bot))
+    cog = AdminEdit(bot)
+    await bot.add_cog(cog)
+    # See the matching note in cogs/admin_add.py's setup() - edit_group
+    # and change_group both have parent=admin_group, so their commands
+    # never get bound to this cog by discord.py's normal Cog machinery
+    # and fail at runtime without this.
+    for group in (cog.edit_group, cog.change_group):
+        for command in group.walk_commands():
+            command.binding = cog

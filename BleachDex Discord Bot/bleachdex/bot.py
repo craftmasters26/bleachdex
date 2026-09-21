@@ -1,13 +1,3 @@
-"""
-BleachDex-Lite — single-process Discord bot.
-
-Run with:  python3 bot.py
-
-This replaces BallsDex's Docker+Postgres+Django stack with one Python
-process + a local SQLite file, so it can run on hosts that only give
-you a single process slot (Wispbyte, Render, a cheap VPS, your own PC).
-"""
-
 import asyncio
 import logging
 
@@ -29,18 +19,21 @@ EXTENSIONS = [
     "cogs.collection",
     "cogs.economy",
     "cogs.admin_add",
+    "cogs.admin_seed",
     "cogs.card_view",
-    "cogs.trade",
-    "cogs.battle",
     "cogs.equip",
     "cogs.team",
     "cogs.spawn",
     "cogs.admin_edit",
-    "cogs.shop",
     "cogs.leaderboard",
     "cogs.about",
     "cogs.achievements",
     "cogs.emoji_admin",
+    "cogs.trade",    
+    "cogs.boss",
+    "cogs.merchant",
+    "cogs.craft",
+    "cogs.shop",
 ]
 
 
@@ -68,8 +61,32 @@ class BleachDexBot(commands.Bot):
         # not in any individual cog's setup().
         from cogs.admin_group import admin_group
         self.tree.add_command(admin_group)
+
+        if config.DEV_GUILD_ID:
+            # DEV_GUILD_ID is a debugging aid only, for one server you use
+            # while testing - it must never make the bot behave as if it
+            # only serves one server. So: if it's set, we ONLY use it to
+            # wipe out any leftover guild-scoped commands that an earlier
+            # version of this file may have registered there (those would
+            # otherwise sit alongside the global ones as confusing
+            # duplicates in that one server). We do NOT copy commands into
+            # that guild anymore - everything below is a normal global
+            # sync, same as if this var were unset.
+            guild = discord.Object(id=int(config.DEV_GUILD_ID))
+            self.tree.clear_commands(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info(
+                "Cleared any leftover guild-scoped commands from guild %s "
+                "(BLEACHDEX_DEV_GUILD_ID is only used for cleanup now - "
+                "commands sync globally, for every server)", config.DEV_GUILD_ID
+            )
+
         synced = await self.tree.sync()
-        log.info("Synced %d slash commands", len(synced))
+        log.info(
+            "Synced %d slash commands globally, for every server this bot "
+            "is in (can take up to an hour to fully propagate after a "
+            "change)", len(synced)
+        )
 
     async def on_ready(self):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
@@ -79,6 +96,18 @@ class BleachDexBot(commands.Bot):
             result = self._on_ready_extra()
             if asyncio.iscoroutine(result):
                 await result
+
+        # Website sync bridge - mirrors SQLite into MongoDB every
+        # MONGO_SYNC_INTERVAL_SECONDS so the BleachDex website's
+        # leaderboard/dashboard/roster reflect real, live player data.
+        # No-ops (just logs a warning once) if MONGODB_URI isn't set -
+        # the bot and admin panel are fully unaffected either way.
+        # Task is stashed on self so it isn't garbage-collected mid-run,
+        # and only started once even if on_ready fires again after a
+        # reconnect (self._mongo_sync_task already set).
+        if not getattr(self, "_mongo_sync_task", None):
+            from sync.mongo_sync import start_background_sync
+            self._mongo_sync_task = start_background_sync(self)
 
 
 async def main():

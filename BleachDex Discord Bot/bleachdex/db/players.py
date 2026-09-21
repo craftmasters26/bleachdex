@@ -12,7 +12,7 @@ from db.connection import get_connection
 DAILY_COIN_COOLDOWN = 24 * 60 * 60
 WEEKLY_PACK_COOLDOWN = 7 * 24 * 60 * 60
 DAILY_PACK_LIMIT = 3
-DAILY_COIN_AMOUNT = 100
+DAILY_COIN_AMOUNT = 300
 
 
 def _today_str() -> str:
@@ -79,6 +79,30 @@ def spend_coins(discord_id: int, amount: int) -> bool:
         )
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def record_traded_away(discord_id: int, count: int = 1) -> None:
+    ensure_player(discord_id)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE players SET traded_away_count = traded_away_count + ? WHERE discord_id = ?",
+            (count, discord_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_traded_away_count(discord_id: int) -> int:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT traded_away_count FROM players WHERE discord_id = ?", (discord_id,)
+        ).fetchone()
+        return row["traded_away_count"] if row else 0
     finally:
         conn.close()
 

@@ -5,7 +5,7 @@ isn't a weapon/zanpakuto - see weapons.py for those).
 
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Optional
 
 from db.connection import get_connection, TIERS, TIER_WEIGHTS
@@ -28,13 +28,17 @@ class Character:
     card_image_path: str
     enabled: bool
     created_at: int = 0
+    craftable_only: bool = False
 
     @classmethod
     def from_row(cls, row) -> "Character":
         data = dict(row)
         data["enabled"] = bool(data["enabled"])
+        data["craftable_only"] = bool(data.get("craftable_only", 0))
         data.setdefault("card_template_path", "")
         data.setdefault("card_image_path", "")
+        known_fields = {f.name for f in fields(cls)}
+        data = {k: v for k, v in data.items() if k in known_fields}
         return cls(**data)
 
 
@@ -68,13 +72,27 @@ def add_character(
         conn.close()
 
 
-def list_characters(enabled_only: bool = True, min_tier: Optional[str] = None) -> list[Character]:
+def list_characters(
+    enabled_only: bool = True,
+    min_tier: Optional[str] = None,
+    include_craftable_only: bool = False,
+) -> list[Character]:
+    """
+    include_craftable_only=False (the default) excludes characters
+    marked craftable_only - this is deliberate so every EXISTING
+    caller (pack pulls, wild spawns, /merchant's random-tier grants)
+    automatically never hands one out, with no changes needed at
+    those call sites. Only db/craftables.py passes True, to look one
+    up by name/id directly for /admin craftable and /craft.
+    """
     conn = get_connection()
     try:
         query = "SELECT * FROM characters WHERE 1=1"
         params: list = []
         if enabled_only:
             query += " AND enabled = 1"
+        if not include_craftable_only:
+            query += " AND craftable_only = 0"
         if min_tier:
             allowed = TIERS[TIERS.index(min_tier):]
             placeholders = ",".join("?" for _ in allowed)
@@ -116,6 +134,47 @@ def update_character_image(character_id: int, new_image_path: str) -> None:
         conn.execute(
             "UPDATE characters SET image_path = ? WHERE id = ?",
             (new_image_path, character_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_character_stats(
+    character_id: int,
+    hp: int,
+    attack: int,
+    tier: str,
+    ability_name: str = "",
+    ability_description: str = "",
+) -> None:
+    """Update an existing character's HP/ATK/tier/ability in place.
+
+    Used by seed_roster.py so re-running the seed with updated numbers
+    actually applies them to characters that already exist in the DB
+    (add_character() only INSERTs, it never touches existing rows -
+    this is the missing UPDATE counterpart for stats).
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE characters
+               SET hp = ?, attack = ?, tier = ?,
+                   ability_name = ?, ability_description = ?
+               WHERE id = ?""",
+            (hp, attack, tier, ability_name, ability_description, character_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_character_name(character_id: int, new_name: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE characters SET name = ? WHERE id = ?",
+            (new_name, character_id),
         )
         conn.commit()
     finally:

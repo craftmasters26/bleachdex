@@ -1,14 +1,25 @@
 """
-Turn-based battle: two fighters take turns attacking using their
-attack stat (plus equipped weapon bonus, if any) against the other's
-remaining HP, until one hits 0.
+logic/battle.py - 3v3 simultaneous team battle simulator.
 
-Battles don't permanently damage owned cards - HP resets each fight.
-This is a pure function (no Discord, no DB writes) so it's easy to
-test and easy to reuse if you want a different presentation later.
+Every round, each fighter still standing on a team attacks a randomly
+chosen alive fighter on the OTHER team. All of a round's attacks are
+resolved against HP as it stood at the START of that round (a
+simultaneous exchange, not sequential turns) - so two fighters can
+both go down in the same round if fate has them targeting each other
+and neither survives the hit.
+
+The battle ends the instant one team has zero fighters left standing
+after a round resolves. If both teams are wiped in the exact same
+round, it's a draw (winner_label is None). As a safety net against a
+pathological all-zero-attack matchup looping forever, MAX_ROUNDS caps
+it and falls back to whichever team has more total remaining HP.
 """
 
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, field
+from typing import Optional
+
+MAX_ROUNDS = 100
 
 
 @dataclass
@@ -16,157 +27,108 @@ class Fighter:
     name: str
     max_hp: int
     attack: int
-    owner_label: str  # e.g. the Discord display name, for the log
+    owner_label: str
+    current_hp: int = field(init=False)
+    is_ko: bool = field(init=False, default=False)
+
+    def __post_init__(self):
+        self.current_hp = self.max_hp
+
+    def take_damage(self, amount: int) -> None:
+        self.current_hp = max(0, self.current_hp - amount)
+        if self.current_hp == 0:
+            self.is_ko = True
 
 
 @dataclass
-class BattleResult:
-    log: list[str]
-    winner: Fighter
-    loser: Fighter
-    rounds: int
+class RoundResult:
+    round_number: int
+    log_line: str
 
 
-def simulate_battle(fighter_a: Fighter, fighter_b: Fighter, max_rounds: int = 100) -> BattleResult:
-    if fighter_a.max_hp <= 0 or fighter_b.max_hp <= 0:
-        raise ValueError("Fighters must start with positive HP.")
-    if fighter_a.attack <= 0 or fighter_b.attack <= 0:
-        raise ValueError("Fighters must have positive attack to ever land a hit.")
+class TeamBattleState:
+    def __init__(self, team_a: list[Fighter], team_b: list[Fighter], label_a: str, label_b: str):
+        if not team_a or not team_b:
+            raise ValueError("Both teams need at least one fighter.")
+        self.team_a = team_a
+        self.team_b = team_b
+        self.label_a = label_a
+        self.label_b = label_b
+        self.round_number = 1
+        self.finished = False
+        self.winner_label: Optional[str] = None
+        self._started = False
 
-    hp_a, hp_b = fighter_a.max_hp, fighter_b.max_hp
-    log: list[str] = [
-        f"⚔️ {fighter_a.name} ({fighter_a.owner_label}, {hp_a} HP / {fighter_a.attack} ATK) "
-        f"vs {fighter_b.name} ({fighter_b.owner_label}, {hp_b} HP / {fighter_b.attack} ATK)"
-    ]
+    def _alive(self, team: list[Fighter]) -> list[Fighter]:
+        return [f for f in team if not f.is_ko]
 
-    attacker, defender = fighter_a, fighter_b
-    attacker_hp, defender_hp = hp_a, hp_b
-    rounds = 0
+    def advance_round(self) -> Optional[RoundResult]:
+        if self.finished:
+            return None
 
-    while attacker_hp > 0 and defender_hp > 0 and rounds < max_rounds:
-        rounds += 1
-        defender_hp -= attacker.attack
-        defender_hp = max(defender_hp, 0)
-        log.append(
-            f"Round {rounds}: {attacker.name} hits {defender.name} for "
-            f"{attacker.attack} — {defender.name} has {defender_hp} HP left."
-        )
-        if defender_hp <= 0:
-            break
-        # swap roles for the next round
-        attacker, defender = defender, attacker
-        attacker_hp, defender_hp = defender_hp, attacker_hp
+        # round_number is bumped at the START of every call after the
+        # first (it's already correctly 1 to begin with) - this keeps
+        # state.round_number matching whichever round's log_line is in
+        # the result that's about to be returned, since the caller reads
+        # BOTH from the state object right after this call returns.
+        if self._started:
+            self.round_number += 1
+        self._started = True
 
-    # after the loop, `defender` is the one who just dropped to 0 (the loser),
-    # unless we hit max_rounds without a knockout
-    if defender_hp <= 0:
-        winner, loser = attacker, defender
-        log.append(f"🏆 {winner.name} wins!")
-    else:
-        # round cap reached - higher remaining HP wins as a tiebreak
-        if attacker_hp >= defender_hp:
-            winner, loser = attacker, defender
-        else:
-            winner, loser = defender, attacker
-        log.append(f"⏱️ Round limit reached — {winner.name} wins on remaining HP.")
+        alive_a = self._alive(self.team_a)
+        alive_b = self._alive(self.team_b)
+        if not alive_a or not alive_b:
+            # Shouldn't normally happen (finished should already be set by
+            # the previous call), but never crash the bot over it.
+            self.finished = True
+            return None
 
-    return BattleResult(log=log, winner=winner, loser=loser, rounds=rounds)
+        events: list[str] = []
+        pending_damage: dict[int, int] = {}
 
+        for attacker in alive_a:
+            target = random.choice(alive_b)
+            pending_damage[id(target)] = pending_damage.get(id(target), 0) + attacker.attack
+            events.append(f"{attacker.name} hits {target.name} for {attacker.attack}")
+        for attacker in alive_b:
+            target = random.choice(alive_a)
+            pending_damage[id(target)] = pending_damage.get(id(target), 0) + attacker.attack
+            events.append(f"{attacker.name} hits {target.name} for {attacker.attack}")
 
-@dataclass
-class TeamBattleResult:
-    log: list[str]
-    winning_team_label: str
-    losing_team_label: str
-    rounds: int
+        for fighter in alive_a + alive_b:
+            dmg = pending_damage.get(id(fighter))
+            if dmg:
+                fighter.take_damage(dmg)
 
+        ko_events = [f"💀 {f.name} was knocked out!" for f in alive_a + alive_b if f.is_ko]
 
-def simulate_team_battle(
-    team_a: list[Fighter],
-    team_b: list[Fighter],
-    team_a_label: str,
-    team_b_label: str,
-    max_rounds: int = 300,
-) -> TeamBattleResult:
-    """
-    3v3 sequential team battle. Fighters go in slot order (index 0 is
-    sent out first). A fighter who wins a matchup stays in and keeps
-    fighting at their CURRENT remaining HP (not refilled) against the
-    next opponent - so wearing down the other team's frontline matters.
-    A team loses once all 3 of its fighters have been knocked out.
-    """
-    for team, label in ((team_a, team_a_label), (team_b, team_b_label)):
-        for f in team:
-            if f.max_hp <= 0 or f.attack <= 0:
-                raise ValueError(
-                    f"{label}'s fighter {f.name} must have positive HP and attack."
-                )
+        # Keep the embed field readable - a 3v3 can have up to 6 hits a
+        # round, which is already a lot of lines; trim further if needed.
+        log_parts = events[:4]
+        if len(events) > 4:
+            log_parts.append(f"...and {len(events) - 4} more hit(s)")
+        log_parts.extend(ko_events)
+        result = RoundResult(round_number=self.round_number, log_line="\n".join(log_parts))
 
-    idx_a, idx_b = 0, 0
-    hp_a = team_a[0].max_hp
-    hp_b = team_b[0].max_hp
+        a_wiped = not self._alive(self.team_a)
+        b_wiped = not self._alive(self.team_b)
 
-    log: list[str] = [
-        f"⚔️ **{team_a_label}** ({', '.join(f.name for f in team_a)}) vs "
-        f"**{team_b_label}** ({', '.join(f.name for f in team_b)})"
-    ]
-
-    rounds = 0
-    # Whoever's turn it is to attack first each matchup alternates starting
-    # with team A's first fighter attacking first.
-    a_attacks_first = True
-
-    while idx_a < len(team_a) and idx_b < len(team_b) and rounds < max_rounds:
-        fighter_a, fighter_b = team_a[idx_a], team_b[idx_b]
-        log.append(
-            f"\n🥊 {team_a_label}'s **{fighter_a.name}** ({hp_a} HP) enters "
-            f"against {team_b_label}'s **{fighter_b.name}** ({hp_b} HP)."
-        )
-
-        if a_attacks_first:
-            attacker_side, defender_side = "a", "b"
-        else:
-            attacker_side, defender_side = "b", "a"
-
-        while hp_a > 0 and hp_b > 0 and rounds < max_rounds:
-            rounds += 1
-            if attacker_side == "a":
-                hp_b -= fighter_a.attack
-                hp_b = max(hp_b, 0)
-                log.append(
-                    f"Round {rounds}: {fighter_a.name} hits {fighter_b.name} for "
-                    f"{fighter_a.attack} — {fighter_b.name} has {hp_b} HP left."
-                )
-                attacker_side, defender_side = "b", "a"
+        if a_wiped and b_wiped:
+            self.finished, self.winner_label = True, None
+        elif a_wiped:
+            self.finished, self.winner_label = True, self.label_b
+        elif b_wiped:
+            self.finished, self.winner_label = True, self.label_a
+        elif self.round_number >= MAX_ROUNDS:
+            # Safety net: force a decision by total remaining HP rather
+            # than let a degenerate matchup (e.g. 0-attack fighters) loop
+            # forever.
+            hp_a = sum(f.current_hp for f in self.team_a)
+            hp_b = sum(f.current_hp for f in self.team_b)
+            self.finished = True
+            if hp_a == hp_b:
+                self.winner_label = None
             else:
-                hp_a -= fighter_b.attack
-                hp_a = max(hp_a, 0)
-                log.append(
-                    f"Round {rounds}: {fighter_b.name} hits {fighter_a.name} for "
-                    f"{fighter_b.attack} — {fighter_a.name} has {hp_a} HP left."
-                )
-                attacker_side, defender_side = "a", "b"
+                self.winner_label = self.label_a if hp_a > hp_b else self.label_b
 
-        if hp_a <= 0:
-            log.append(f"💀 {fighter_a.name} is knocked out!")
-            idx_a += 1
-            a_attacks_first = False
-            if idx_a < len(team_a):
-                hp_a = team_a[idx_a].max_hp
-        if hp_b <= 0:
-            log.append(f"💀 {fighter_b.name} is knocked out!")
-            idx_b += 1
-            a_attacks_first = True
-            if idx_b < len(team_b):
-                hp_b = team_b[idx_b].max_hp
-
-    if idx_b >= len(team_b):
-        winner_label, loser_label = team_a_label, team_b_label
-    else:
-        winner_label, loser_label = team_b_label, team_a_label
-
-    log.append(f"\n🏆 **{winner_label}** wins the team battle!")
-
-    return TeamBattleResult(
-        log=log, winning_team_label=winner_label, losing_team_label=loser_label, rounds=rounds
-    )
+        return result

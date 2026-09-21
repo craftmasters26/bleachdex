@@ -23,7 +23,6 @@ from flask import Flask
 
 import config
 from bot import BleachDexBot
-from admin.app import admin_bp
 from web.dashboard import dashboard_bp, init_dashboard
 
 logging.basicConfig(
@@ -34,7 +33,6 @@ log = logging.getLogger("bleachdex.server")
 
 app = Flask(__name__)
 app.secret_key = config.ADMIN_PANEL_SECRET
-app.register_blueprint(admin_bp)
 app.register_blueprint(dashboard_bp)
 
 

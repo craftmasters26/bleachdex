@@ -43,6 +43,35 @@ async def refresh_application_emoji_cache(client: discord.Client) -> None:
         pass  # keep whatever we had cached before; don't crash the caller
 
 
+def get_emoji_object(client: discord.Client, emoji_id: str):
+    """
+    Like resolve_emoji, but returns the actual discord.Emoji object (or
+    None) instead of a mention string - for places that need a real
+    Emoji, like SelectOption(emoji=...), rather than text to print.
+    """
+    if not emoji_id:
+        return None
+    try:
+        eid = int(emoji_id)
+    except (ValueError, TypeError):
+        return None
+    return client.get_emoji(eid) or _app_emoji_cache.get(emoji_id)
+
+
+def kan_label(client: discord.Client) -> str:
+    """
+    The KAN currency's display form - its custom emoji if one's been
+    set via `/admin emoji set-custom key:kan emoji_id:...`, otherwise
+    falls back to the word "KAN" plain. Use this instead of hardcoding
+    "KAN" anywhere a coin amount is shown to a player.
+    """
+    from db import custom_emoji as ce  # local import: avoids a hard dependency
+    # for discord_utils on the db layer at module-import time.
+    emoji_id = ce.get_emoji_id("kan")
+    mention = resolve_emoji(client, emoji_id) if emoji_id else ""
+    return mention or "KAN"
+
+
 def resolve_emoji(client: discord.Client, emoji_id: str) -> str:
     """
     Turns a stored emoji ID into a real, renderable Discord emoji mention.

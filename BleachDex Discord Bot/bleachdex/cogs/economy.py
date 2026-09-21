@@ -9,6 +9,7 @@ from discord.ext import commands
 from typing import Optional
 
 from db import players as pl
+from discord_utils import kan_label
 
 
 class Economy(commands.Cog):
@@ -27,16 +28,18 @@ class Economy(commands.Cog):
             )
             return
 
+        kan = kan_label(interaction.client)
         await interaction.response.send_message(
-            f"💰 You claimed **{pl.DAILY_COIN_AMOUNT} KAN coins**! "
-            f"Balance: **{new_balance} KAN**."
+            f"You claimed **{pl.DAILY_COIN_AMOUNT} {kan}**! "
+            f"Balance: **{new_balance} {kan}**."
         )
 
     @app_commands.command(name="balance", description="Check your KAN coin balance")
     async def balance(self, interaction: discord.Interaction, user: Optional[discord.User] = None):
         target = user or interaction.user
         bal = pl.get_balance(target.id)
-        await interaction.response.send_message(f"💰 {target.display_name} has **{bal} KAN**.")
+        kan = kan_label(interaction.client)
+        await interaction.response.send_message(f"{target.display_name} has **{bal} {kan}**.")
 
 
 async def setup(bot: commands.Bot):

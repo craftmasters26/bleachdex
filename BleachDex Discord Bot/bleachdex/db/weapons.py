@@ -3,8 +3,10 @@ Weapons: Zanpakuto and other equippable items. Kept in a separate
 table from characters on purpose (per your instruction to split
 "weapon = zanpakuto" from "character = everything else").
 
-A weapon can be equipped onto an owned character instance to add its
-attack_bonus during battle - see db/collection.py.
+A weapon can be equipped onto an owned character instance to boost
+its HP or damage by a PERCENTAGE during battle (boost_type/
+boost_percent - e.g. boost_type="damage", boost_percent=40 means
++40% damage) - see db/collection.py and cogs/battle.py.
 """
 
 import random
@@ -21,7 +23,7 @@ class Weapon:
     name: str
     position: str
     image_path: str
-    attack_bonus: int
+    attack_bonus: int          # deprecated - kept for old DB rows, no longer used. See boost_type/boost_percent.
     tier: str
     rarity: int
     emoji: str
@@ -31,6 +33,8 @@ class Weapon:
     ability_name: str = ""
     ability_description: str = ""
     card_image_path: str = ""
+    boost_type: str = "damage"    # 'damage' or 'hp' - which stat this weapon boosts
+    boost_percent: int = 0        # e.g. 40 means +40%
 
     @classmethod
     def from_row(cls, row) -> "Weapon":
@@ -40,13 +44,16 @@ class Weapon:
         data.setdefault("ability_name", "")
         data.setdefault("ability_description", "")
         data.setdefault("card_image_path", "")
+        data.setdefault("boost_type", "damage")
+        data.setdefault("boost_percent", 0)
         return cls(**data)
 
 
 def add_weapon(
     name: str,
     image_path: str,
-    attack_bonus: int = 1,
+    boost_type: str = "damage",
+    boost_percent: int = 0,
     tier: str = "common",
     rarity: int = 100,
     emoji: str = "",
@@ -56,14 +63,16 @@ def add_weapon(
 ) -> int:
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {TIERS}")
+    if boost_type not in ("damage", "hp"):
+        raise ValueError("boost_type must be 'damage' or 'hp'")
     conn = get_connection()
     try:
         cur = conn.execute(
             """INSERT INTO weapons
-               (name, position, image_path, attack_bonus, tier, rarity,
+               (name, position, image_path, boost_type, boost_percent, tier, rarity,
                 emoji, ability_name, ability_description, enabled, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (name, position, image_path, attack_bonus, tier, rarity,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+            (name, position, image_path, boost_type, boost_percent, tier, rarity,
              emoji, ability_name, ability_description, int(time.time())),
         )
         conn.commit()
@@ -118,24 +127,42 @@ def update_weapon_image(weapon_id: int, new_image_path: str) -> None:
         conn.close()
 
 
+def update_weapon_emoji(weapon_id: int, emoji_id: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE weapons SET emoji = ? WHERE id = ?",
+            (emoji_id, weapon_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_weapon_card(
     weapon_id: int,
-    attack_bonus: Optional[int] = None,
+    boost_type: Optional[str] = None,
+    boost_percent: Optional[int] = None,
     card_template_path: Optional[str] = None,
     card_image_path: Optional[str] = None,
     ability_name: Optional[str] = None,
     ability_description: Optional[str] = None,
 ) -> None:
     """Used by /edit card weapon to fill in (or update) a weapon's actual
-    CARD: its attack bonus, its per-card background template, its
+    CARD: its boost type/percent, its per-card background template, its
     ability text, and optionally replacement art FOR THE CARD ONLY.
 
     Deliberately never touches `image_path` - see the matching note on
     update_character_card in db/characters.py for why."""
     fields, params = [], []
-    if attack_bonus is not None:
-        fields.append("attack_bonus = ?")
-        params.append(attack_bonus)
+    if boost_type is not None:
+        if boost_type not in ("damage", "hp"):
+            raise ValueError("boost_type must be 'damage' or 'hp'")
+        fields.append("boost_type = ?")
+        params.append(boost_type)
+    if boost_percent is not None:
+        fields.append("boost_percent = ?")
+        params.append(boost_percent)
     if card_template_path is not None:
         fields.append("card_template_path = ?")
         params.append(card_template_path)

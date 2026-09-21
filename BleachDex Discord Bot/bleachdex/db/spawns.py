@@ -1,24 +1,44 @@
 """
-The spawn engine's data layer.
+The spawn engine's data layer - MESSAGE-DRIVEN, not timer-driven.
 
-How it fits together (mirrors BallsDex's countryballs spawn mechanic,
-adapted to a single SQLite file instead of Postgres):
+How it works now:
 
-1. Admin runs /set spawn #channel — stored in guild_settings.
-2. Every message sent in that channel flips channel_has_activity to 1
-   (see cogs/spawn.py's on_message listener).
-3. A background loop checks each configured guild on a random 5-10
-   minute interval. If channel_has_activity is 1, it spawns a random
-   character/weapon there and resets the flag to 0 (so a quiet channel
-   never spawns things nobody's around to catch).
-4. The spawn is recorded in active_spawns with caught_by = NULL.
+1. Admin runs /set spawn #channel - stored in guild_settings, along
+   with last_spawn_at (when the guild last got a spawn) reset to "now".
+
+2. Every message sent in the configured channel calls record_message(),
+   which bumps message_count_since_spawn by 1 and immediately checks
+   spawn_readiness_score() against SPAWN_THRESHOLD. There is NO
+   background polling loop anymore - a spawn can only ever be
+   triggered by an actual incoming message, matching "only spawns if
+   a user sends a message."
+
+3. The readiness formula:
+
+       score = scaled_message_count + TIME_MULTIPLIER * minutes_elapsed
+
+   where scaled_message_count is message_count_since_spawn capped at
+   MESSAGE_CAP (so a burst of spam can't force an instant spawn) and
+   minutes_elapsed is time since last_spawn_at. With the defaults
+   below (MESSAGE_CAP=5, TIME_MULTIPLIER=1.0, THRESHOLD=10.0), an
+   extremely active channel can't spawn faster than a 5-minute floor
+   (5 message-points + 5 minutes x 1.0 = 10), and a quiet channel with
+   only occasional messages will still eventually cross the threshold
+   around the 10-minute mark from time alone - landing spawns roughly
+   in the 5-10 minute range you asked for, scaled by how chatty the
+   channel actually is.
+
+4. When record_message() reports ready=True, the caller (cogs/spawn.py)
+   posts the spawn and calls reset_after_spawn() to zero the counter
+   and restart the clock.
+
+5. The spawn is recorded in active_spawns with caught_by = NULL.
    Catching is a race - whoever's /catch guess lands first while
-   caught_by is still NULL wins. resolve_catch() uses an atomic
-   UPDATE ... WHERE caught_by IS NULL so two simultaneous correct
-   guesses can't both "win".
+   caught_by is still NULL AND the catch window hasn't expired wins.
+   resolve_catch() uses an atomic UPDATE ... WHERE caught_by IS NULL
+   so two simultaneous correct guesses can't both "win".
 """
 
-import random
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -29,18 +49,24 @@ from db.connection import get_connection
 # that, resolve_catch() below refuses even a correct guess.
 CATCH_WINDOW_SECONDS = 5 * 60
 
+# --- Spawn readiness tuning ---
+# score = min(message_count, MESSAGE_CAP) + TIME_MULTIPLIER * minutes_elapsed
+SPAWN_THRESHOLD = 20.0
+MESSAGE_CAP = 5.0
+TIME_MULTIPLIER = 1.0
+
 
 # ---------- Guild spawn config ----------
 
 def set_spawn_channel(guild_id: int, channel_id: int) -> None:
     conn = get_connection()
     try:
-        due = int(time.time()) + next_spawn_delay_seconds()
         conn.execute(
-            """INSERT INTO guild_settings (guild_id, spawn_channel_id, channel_has_activity, last_spawn_at, next_check_at)
-               VALUES (?, ?, 0, 0, ?)
+            """INSERT INTO guild_settings
+                 (guild_id, spawn_channel_id, last_spawn_at, message_count_since_spawn)
+               VALUES (?, ?, ?, 0)
                ON CONFLICT(guild_id) DO UPDATE SET spawn_channel_id = excluded.spawn_channel_id""",
-            (guild_id, channel_id, due),
+            (guild_id, channel_id, int(time.time())),
         )
         conn.commit()
     finally:
@@ -69,78 +95,78 @@ def list_configured_guilds() -> list[int]:
         conn.close()
 
 
-def mark_channel_active(guild_id: int) -> None:
+def spawn_readiness_score(message_count: int, minutes_elapsed: float) -> float:
+    """Pure function, no DB access - kept separate from record_message()
+    so the scoring math itself is easy to unit test."""
+    scaled_message_count = min(message_count, MESSAGE_CAP)
+    return scaled_message_count + TIME_MULTIPLIER * minutes_elapsed
+
+
+def record_message(guild_id: int) -> bool:
+    """
+    Call this for every message sent in a guild's configured spawn
+    channel. Increments the message counter, computes readiness, and
+    returns True if a spawn should fire right now.
+
+    IMPORTANT: when this returns True, the counter has ALREADY been
+    reset back to 0 (and last_spawn_at updated) as part of this same
+    call - not left for the caller to reset after posting the spawn.
+    That used to be a real bug: posting a spawn involves awaiting I/O
+    (rendering the card image, uploading it to Discord), and during
+    that await, more messages could arrive and each independently call
+    record_message() again before the counter was reset - since the
+    score was already over threshold, every one of them ALSO returned
+    True, causing 2-3 duplicate spawns from a single burst of chat.
+    Resetting immediately, before any async work happens, closes that
+    window - the next message right after this one starts counting
+    from zero again regardless of how long spawn_now() takes.
+    """
     conn = get_connection()
     try:
-        conn.execute(
-            "UPDATE guild_settings SET channel_has_activity = 1 WHERE guild_id = ?",
+        row = conn.execute(
+            "SELECT last_spawn_at, message_count_since_spawn FROM guild_settings WHERE guild_id = ?",
             (guild_id,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def has_activity_since_last_check(guild_id: int) -> bool:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT channel_has_activity FROM guild_settings WHERE guild_id = ?", (guild_id,)
-        ).fetchone()
-        return bool(row["channel_has_activity"]) if row else False
-    finally:
-        conn.close()
-
-
-def reset_activity_and_record_spawn(guild_id: int) -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            """UPDATE guild_settings SET channel_has_activity = 0, last_spawn_at = ?
-               WHERE guild_id = ?""",
-            (int(time.time()), guild_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def next_spawn_delay_seconds() -> int:
-    """Random delay between 5 and 10 minutes, matching the spec."""
-    return random.randint(5 * 60, 10 * 60)
-
-
-def is_check_due(guild_id: int) -> bool:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT next_check_at FROM guild_settings WHERE guild_id = ?", (guild_id,)
         ).fetchone()
         if row is None:
             return False
-        return int(time.time()) >= (row["next_check_at"] or 0)
+
+        new_count = row["message_count_since_spawn"] + 1
+        minutes_elapsed = (int(time.time()) - (row["last_spawn_at"] or 0)) / 60.0
+        score = spawn_readiness_score(new_count, minutes_elapsed)
+        ready = score >= SPAWN_THRESHOLD
+
+        if ready:
+            conn.execute(
+                """UPDATE guild_settings SET message_count_since_spawn = 0, last_spawn_at = ?
+                   WHERE guild_id = ?""",
+                (int(time.time()), guild_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE guild_settings SET message_count_since_spawn = ? WHERE guild_id = ?",
+                (new_count, guild_id),
+            )
+        conn.commit()
+        return ready
     finally:
         conn.close()
 
 
-def advance_next_check(guild_id: int, clear_activity: bool) -> None:
-    """Called every time the periodic check actually runs for a guild,
-    whether or not it resulted in a spawn - schedules the next check
-    5-10 minutes out and (usually) clears the activity flag so the next
-    window starts fresh."""
+def reset_after_spawn(guild_id: int) -> None:
+    """
+    No longer needed for the normal spawn flow - record_message() now
+    resets the counter itself the instant it decides to spawn, before
+    any async work happens (see its docstring for why). Kept around
+    only in case anything wants to manually force a guild's counter
+    back to zero (e.g. an admin "reset the spawn meter" command).
+    """
     conn = get_connection()
     try:
-        next_due = int(time.time()) + next_spawn_delay_seconds()
-        if clear_activity:
-            conn.execute(
-                "UPDATE guild_settings SET next_check_at = ?, channel_has_activity = 0 WHERE guild_id = ?",
-                (next_due, guild_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE guild_settings SET next_check_at = ? WHERE guild_id = ?",
-                (next_due, guild_id),
-            )
+        conn.execute(
+            """UPDATE guild_settings SET message_count_since_spawn = 0, last_spawn_at = ?
+               WHERE guild_id = ?""",
+            (int(time.time()), guild_id),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -197,9 +223,9 @@ def get_active_spawn(spawn_id: int) -> Optional[ActiveSpawn]:
 def resolve_catch(spawn_id: int, guesser_discord_id: int) -> bool:
     """
     Atomically claims the spawn for guesser_discord_id IF nobody has
-    claimed it yet AND the 5-minute catch window hasn't expired.
-    Returns True if this call won the race, False otherwise (already
-    caught, OR too slow). Safe to call concurrently.
+    claimed it yet AND the catch window hasn't expired. Returns True
+    if this call won the race, False otherwise (already caught, OR too
+    slow). Safe to call concurrently.
     """
     conn = get_connection()
     try:

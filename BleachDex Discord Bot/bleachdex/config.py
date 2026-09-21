@@ -18,6 +18,19 @@ ADMIN_PANEL_SECRET = os.environ.get("ADMIN_PANEL_SECRET", "change-me")
 ADMIN_PANEL_PASSWORD = os.environ.get("ADMIN_PANEL_PASSWORD", "change-me")
 ADMIN_PANEL_PORT = int(os.environ.get("ADMIN_PANEL_PORT", "5000"))
 
+# Optional: your Discord server's ID. When set, slash commands sync
+# ONLY to that server and apply instantly (global syncs can take up to
+# an hour to show up / stop erroring with CommandSignatureMismatch).
+# Right-click your server icon in Discord (Developer Mode must be on
+# under User Settings -> Advanced) -> "Copy Server ID".
+DEV_GUILD_ID = os.environ.get("BLEACHDEX_DEV_GUILD_ID", "")
+
+# The ID of your MAIN server (the one the invite link in cogs/spawn.py
+# points to). Needed for the "Main Catcher" achievement - it's earned by
+# catching a soul in this server. Right-click the server icon -> "Copy
+# Server ID". Defaults to your main server; the env var overrides it.
+MAIN_GUILD_ID = int(os.environ.get("BLEACHDEX_MAIN_GUILD_ID", "1523569183353208863") or 0)
+
 # --- Player dashboard (Discord OAuth login) ---
 # From https://discord.com/developers/applications -> your app -> OAuth2 tab.
 OAUTH_CLIENT_ID = os.environ.get("BLEACHDEX_CLIENT_ID", "")
